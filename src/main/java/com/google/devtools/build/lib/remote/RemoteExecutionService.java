@@ -352,12 +352,17 @@ public class RemoteExecutionService {
     }
 
     boolean allowRemoteCache =
-        useRemoteCache()
+        !isCacheProbe()
+            && useRemoteCache()
             && shouldUploadLocalResultsToRemoteCache(remoteOptions, spawn.getExecutionInfo())
             && combinedCache.remoteActionCacheSupportsUpdate();
     boolean allowDiskCache = useDiskCache() && Spawns.mayBeCached(spawn);
 
     return CachePolicy.create(allowRemoteCache, allowDiskCache);
+  }
+
+  boolean isCacheProbe() {
+    return executionOptions.cacheProbeOutput != null;
   }
 
   /** Returns {@code true} if the spawn may be executed remotely. */
@@ -506,6 +511,9 @@ public class RemoteExecutionService {
   public RemoteAction buildRemoteAction(
       Spawn spawn, SpawnExecutionContext context, MerkleTreeComputer.BlobPolicy blobPolicy)
       throws IOException, ExecException, InterruptedException {
+    if (isCacheProbe()) {
+      blobPolicy = MerkleTreeComputer.BlobPolicy.DISCARD;
+    }
     maybeAcquireRemoteActionBuildingSemaphore(ProfilerTask.REMOTE_SETUP);
     try {
       // Create a remote path resolver that is aware of the spawn's path mapper, which rewrites
@@ -1740,6 +1748,7 @@ public class RemoteExecutionService {
       Runnable onUploadComplete,
       ConcurrentChangesCheckLevel concurrentChangesCheckLevel)
       throws InterruptedException, ExecException {
+    checkState(!isCacheProbe(), "Cache probes must not upload action results");
     checkState(!shutdown.get(), "shutdown");
     checkState(
         action.getRemoteActionExecutionContext().getWriteCachePolicy().allowAnyCache(),
@@ -1929,6 +1938,7 @@ public class RemoteExecutionService {
    */
   public void uploadInputsIfNotPresent(RemoteAction action, boolean force)
       throws IOException, ExecException, InterruptedException {
+    checkState(!isCacheProbe(), "Cache probes must not upload action inputs");
     checkState(!shutdown.get(), "shutdown");
     checkState(mayBeExecutedRemotely(action.getSpawn()), "spawn can't be executed remotely");
 
@@ -1989,6 +1999,7 @@ public class RemoteExecutionService {
   public RemoteActionResult executeRemotely(
       RemoteAction action, boolean acceptCachedResult, OperationObserver observer)
       throws IOException, InterruptedException {
+    checkState(!isCacheProbe(), "Cache probes must not execute actions");
     checkState(!shutdown.get(), "shutdown");
     checkState(mayBeExecutedRemotely(action.getSpawn()), "spawn can't be executed remotely");
 

@@ -37,6 +37,7 @@ import com.google.devtools.build.lib.events.StoredEventHandler;
 import com.google.devtools.build.lib.exec.SpawnCache.CacheHandle;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.exec.util.SpawnBuilder;
+import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.server.FailureDetails;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
 import com.google.devtools.build.lib.server.FailureDetails.Spawn.Code;
@@ -46,6 +47,7 @@ import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.inmemoryfs.InMemoryFileSystem;
+import com.google.devtools.common.options.OptionsParser;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -69,7 +71,11 @@ public class AbstractSpawnStrategyTest {
 
   private static class TestedSpawnStrategy extends AbstractSpawnStrategy {
     TestedSpawnStrategy(SpawnRunner spawnRunner) {
-      super(spawnRunner, new ExecutionOptions());
+      this(spawnRunner, new ExecutionOptions());
+    }
+
+    TestedSpawnStrategy(SpawnRunner spawnRunner, ExecutionOptions options) {
+      super(spawnRunner, options);
     }
   }
 
@@ -89,6 +95,83 @@ public class AbstractSpawnStrategyTest {
     eventHandler = new StoredEventHandler();
     when(actionExecutionContext.getEventHandler()).thenReturn(eventHandler);
     when(actionExecutionContext.getClock()).thenReturn(clock);
+  }
+
+  private static ExecutionOptions cacheProbeOptions() {
+    ExecutionOptions options = new ExecutionOptions();
+    options.cacheProbeOutput = PathFragment.create("probe.json");
+    return options;
+  }
+
+  @Test
+  public void emptyProbeOutputDoesNotRequireRemoteCache() throws Exception {
+    OptionsParser parser =
+        OptionsParser.builder().optionsClasses(ExecutionOptions.class, RemoteOptions.class).build();
+    parser.parse("--experimental_cache_probe_output=probe.json", "--experimental_cache_probe_output=");
+
+    assertThat(parser.getOptions(ExecutionOptions.class).cacheProbeOutput).isNull();
+    assertThat(parser.getOptions(RemoteOptions.class).remoteRequireCached).isFalse();
+  }
+
+  @Test
+  public void cacheProbeBypassesConfiguredStrategiesAndAcceptsCachedSuccess() throws Exception {
+    SpawnCache cache = mock(SpawnCache.class);
+    SpawnResult result =
+        new SpawnResult.Builder().setStatus(Status.SUCCESS).setRunnerName("cache").build();
+    when(cache.lookup(any(), any())).thenReturn(SpawnCache.success(result));
+    when(actionExecutionContext.getContext(SpawnCache.class)).thenReturn(cache);
+
+    assertThat(
+            new SpawnStrategyResolver(cacheProbeOptions())
+                .exec(SIMPLE_SPAWN, actionExecutionContext))
+        .containsExactly(result);
+
+    verify(actionExecutionContext, never()).getContext(SpawnStrategyRegistry.class);
+    verifyNoInteractions(spawnRunner);
+    assertThat(eventHandler.getPosts()).isEmpty();
+  }
+
+  @Test
+  public void cacheProbeMissIsTypedAndDoesNotDispatchOrStore() throws Exception {
+    SpawnCache cache = mock(SpawnCache.class);
+    CacheHandle handle = mock(CacheHandle.class);
+    when(cache.lookup(any(), any())).thenReturn(handle);
+    when(actionExecutionContext.getContext(SpawnCache.class)).thenReturn(cache);
+    when(actionExecutionContext.getExecRoot()).thenReturn(execRoot);
+
+    SpawnExecException error =
+        assertThrows(
+            SpawnExecException.class,
+            () ->
+                new SpawnStrategyResolver(cacheProbeOptions())
+                    .exec(SIMPLE_SPAWN, actionExecutionContext));
+
+    assertThat(error.getSpawnResult().failureDetail().getSpawn().getCode())
+        .isEqualTo(Code.CACHE_PROBE_MISS);
+    verify(actionExecutionContext, never()).getContext(SpawnStrategyRegistry.class);
+    verify(handle).hasResult();
+    verify(handle).close();
+    verifyNoMoreInteractions(handle);
+    verifyNoInteractions(spawnRunner);
+    assertThat(eventHandler.getPosts()).isEmpty();
+  }
+
+  @Test
+  public void cacheProbeDeniesDirectCachingRunnerDispatch() throws Exception {
+    when(spawnRunner.handlesCaching()).thenReturn(true);
+    when(spawnRunner.getName()).thenReturn("remote");
+    when(actionExecutionContext.getExecRoot()).thenReturn(execRoot);
+
+    SpawnExecException error =
+        assertThrows(
+            SpawnExecException.class,
+            () ->
+                new TestedSpawnStrategy(spawnRunner, cacheProbeOptions())
+                    .exec(SIMPLE_SPAWN, actionExecutionContext));
+
+    assertThat(error.getSpawnResult().failureDetail().getSpawn().getCode())
+        .isEqualTo(Code.CACHE_PROBE_MISS);
+    verify(spawnRunner, never()).exec(any(), any());
   }
 
   @Test
