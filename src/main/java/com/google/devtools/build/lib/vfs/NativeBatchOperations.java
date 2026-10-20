@@ -35,7 +35,7 @@ public final class NativeBatchOperations {
   private final Executor executor;
 
   public NativeBatchOperations() {
-    this(Thread::startVirtualThread);
+    this(command -> Thread.ofPlatform().start(command));
   }
 
   public NativeBatchOperations(Executor executor) {
