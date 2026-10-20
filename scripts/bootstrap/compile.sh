@@ -63,6 +63,9 @@ function get_minor_java_version() {
 
 # Check that javac -version returns a upper version than $JAVA_VERSION.
 get_minor_java_version
+# Keep the language target separate from the JDK used to compile the Timber FFM backend.
+[ ${javac_minor_version} -ge 25 ] || \
+  fail "JDK 25 or newer is required to compile Bazel, please set \$JAVA_HOME."
 [ ${java_minor_version} -le ${javac_minor_version} ] || \
   fail "JDK version (${JAVAC_VERSION}) is lower than ${JAVA_VERSION}, please set \$JAVA_HOME."
 
@@ -401,6 +404,7 @@ function run_bazel_jar() {
       -XX:HeapDumpPath=${OUTPUT_DIR} \
       -Djava.util.logging.config.file=${OUTPUT_DIR}/javalog.properties \
       --add-opens java.base/java.lang=ALL-UNNAMED \
+      --enable-native-access=ALL-UNNAMED \
       ${JNI_FLAGS} \
       -jar ${ARCHIVE_DIR}/libblaze.jar \
       --batch \

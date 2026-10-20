@@ -69,7 +69,7 @@ public class TestExecutorBuilder {
     addContext(TemplateExpansionContext.class, new LocalTemplateExpansionStrategy());
     addContext(
         SymlinkTreeActionContext.class,
-        new SymlinkTreeStrategy(null, TestConstants.WORKSPACE_NAME));
+        new SymlinkTreeStrategy(null, TestConstants.WORKSPACE_NAME, false));
     addContext(SpawnStrategyResolver.class, new SpawnStrategyResolver());
   }
 

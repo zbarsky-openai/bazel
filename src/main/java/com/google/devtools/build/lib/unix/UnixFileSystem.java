@@ -13,6 +13,8 @@
 // limitations under the License.
 package com.google.devtools.build.lib.unix;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.profiler.Profiler;
@@ -33,6 +35,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Collection;
+import java.util.List;
 import javax.annotation.Nullable;
 
 /**
@@ -48,6 +51,50 @@ public class UnixFileSystem extends DiskBackedFileSystem {
   public UnixFileSystem(DigestHashFunction hashFunction, String hashAttributeName) {
     super(hashFunction);
     this.hashAttributeName = hashAttributeName;
+  }
+
+  private static void checkBatchCreatePaths(PathFragment root, List<PathFragment> paths) {
+    checkArgument(root.isAbsolute() && root.getPathString().indexOf('\0') < 0);
+    checkArgument(paths.size() <= 4096);
+    for (PathFragment path : paths) {
+      checkArgument(
+          !path.isAbsolute()
+              && !path.isEmpty()
+              && !path.containsUplevelReferences()
+              && path.getPathString().indexOf('\0') < 0);
+    }
+  }
+
+  private static boolean supportsTimberBatches() {
+    // Keep the FFM implementation unloaded on the ordinary Java 21 server and other platforms.
+    return Runtime.version().feature() >= 25
+        && OS.getCurrent() == OS.LINUX
+        && switch (System.getProperty("os.arch")) {
+          case "amd64", "x86_64", "x64", "aarch64" -> true;
+          default -> false;
+        };
+  }
+
+  @Override
+  public int createDirectoriesBatch(PathFragment root, List<PathFragment> paths)
+      throws IOException {
+    checkBatchCreatePaths(root, paths);
+    return supportsTimberBatches()
+        ? TimberBatchOperations.createDirectories(root.getPathString(), paths)
+        : -1;
+  }
+
+  @Override
+  public int[] createSymlinksBatch(
+      PathFragment root, List<PathFragment> paths, List<PathFragment> targets) throws IOException {
+    checkArgument(paths.size() == targets.size());
+    for (PathFragment target : targets) {
+      checkArgument(target.getPathString().indexOf('\0') < 0);
+    }
+    checkBatchCreatePaths(root, paths);
+    return supportsTimberBatches()
+        ? TimberBatchOperations.createSymlinks(root.getPathString(), paths, targets)
+        : null;
   }
 
   @Override

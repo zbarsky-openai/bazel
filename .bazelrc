@@ -52,6 +52,7 @@ common --tool_java_runtime_version=remotejdk_25
 common --javacopt=-Xlint:-removal
 common --host_javacopt=-Xlint:-removal
 common --jvmopt=--sun-misc-unsafe-memory-access=allow
+common --jvmopt=--enable-native-access=ALL-UNNAMED
 
 # User-specific .bazelrc
 try-import %workspace%/user.bazelrc

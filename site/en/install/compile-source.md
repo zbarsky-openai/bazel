@@ -197,16 +197,21 @@ For instructions for Windows, see [Bootstrap Bazel on Windows](#bootstrap-window
 
 *   **C++ build toolchain**
 
-*   **JDK.** Version 21 is required.
+*   **JDK.** Version 25 or newer is required to compile this Timber-enabled fork.
 
 *   **Python**. Version 3 is required.
 
-For example on Ubuntu Linux you can install these requirements using the
-following command:
+Install JDK 25 or newer and set `JAVA_HOME` to its directory. On Ubuntu Linux,
+you can install the remaining requirements using the following command:
 
 ```sh
-sudo apt-get install build-essential openjdk-21-jdk python3 zip unzip
+sudo apt-get install build-essential python3 zip unzip
 ```
+
+The Java source and bytecode target remains 21. Ordinary filesystem operations
+remain available on Java 21; `--experimental_native_runfiles` uses Panama on
+JDK 25 or newer and falls back to ordinary operations on older runtimes or
+unsupported filesystems.
 
 #### 2.2. Bootstrap Bazel on Unix {:#bootstrap-unix}
 
@@ -244,7 +249,7 @@ For instructions for Unix-like systems, see
     of Visual Studio 2015 or newer, or by installing the latest [Build Tools
     for Visual Studio 2017](https://aka.ms/BuildTools).
 
-*   **JDK.** Version 21 is required.
+*   **JDK.** Version 25 or newer is required to compile this Timber-enabled fork.
 
 *   **Python**. Versions 2 and 3 are supported, installing one of them is
     enough. You need the Windows-native version (downloadable from
@@ -273,14 +278,14 @@ For instructions for Unix-like systems, see
         export BAZEL_VS="C:/Program Files (x86)/Microsoft Visual Studio/2017/BuildTools"
         export BAZEL_SH="$(cygpath -m $(realpath $(which bash)))"
         export PATH="/c/python27:$PATH"
-        export JAVA_HOME="C:/Program Files/Java/jdk-21"
+        export JAVA_HOME="C:/Program Files/Java/jdk-25"
 
     or (using BAZEL\_V<b>C</b>):
 
         export BAZEL_VC="C:/Program Files (x86)/Microsoft Visual Studio/2017/BuildTools/VC"
         export BAZEL_SH="$(cygpath -m $(realpath $(which bash)))"
         export PATH="/c/python27:$PATH"
-        export JAVA_HOME="C:/Program Files/Java/jdk-21"
+        export JAVA_HOME="C:/Program Files/Java/jdk-25"
 
 3.  `cd` to the directory where you unpacked the distribution archive.
 

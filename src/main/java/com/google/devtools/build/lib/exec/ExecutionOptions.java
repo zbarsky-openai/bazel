@@ -63,6 +63,16 @@ public class ExecutionOptions extends OptionsBase {
   public static final ExecutionOptions DEFAULTS = Options.getDefaults(ExecutionOptions.class);
 
   @Option(
+      name = "experimental_native_runfiles",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
+      effectTags = {OptionEffectTag.EXECUTION},
+      help =
+          "Use Timber ioctls to create runfiles directories and symlinks on Linux with JDK 25 or"
+              + " later. Unsupported filesystems and runtimes use ordinary local operations.")
+  public boolean nativeRunfiles;
+
+  @Option(
       name = "spawn_strategy",
       defaultValue = "",
       converter = CommaSeparatedNonEmptyOptionListConverter.class,

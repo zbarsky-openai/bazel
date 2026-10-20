@@ -189,6 +189,7 @@ java_library(
     srcs = ["RunfilesTreeUpdater.java"],
     deps = [
         ":bin_tools",
+        ":execution_options",
         ":symlink_tree_helper",
         "//src/main/java/com/google/devtools/build/lib:runtime",
         "//src/main/java/com/google/devtools/build/lib/actions",
@@ -486,6 +487,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
         "//src/main/protobuf:failure_details_java_proto",
         "//third_party:guava",
+        "//third_party:jsr305",
     ],
 )
 
