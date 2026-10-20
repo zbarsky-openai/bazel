@@ -100,8 +100,8 @@ openbsd)
 
 darwin)
   if [[ -z "$JAVA_HOME" ]]; then
-    JAVA_HOME="$(/usr/libexec/java_home -v ${JAVA_VERSION}+ 2> /dev/null)" \
-      || fail "Could not find JAVA_HOME, please ensure a JDK (version ${JAVA_VERSION}+) is installed."
+    JAVA_HOME="$(/usr/libexec/java_home -v 25+ 2> /dev/null)" \
+      || fail "Could not find JAVA_HOME, please ensure a JDK (version 25+) is installed."
   fi
   ;;
 

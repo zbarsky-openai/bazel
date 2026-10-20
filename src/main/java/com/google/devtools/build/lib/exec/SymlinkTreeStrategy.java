@@ -29,10 +29,12 @@ import com.google.devtools.build.lib.analysis.actions.SymlinkTreeActionContext;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue.RunfileSymlinksMode;
 import com.google.devtools.build.lib.profiler.AutoProfiler;
 import com.google.devtools.build.lib.profiler.GoogleAutoProfilerUtils;
+import com.google.devtools.build.lib.vfs.NativeBatchOperations;
 import com.google.devtools.build.lib.vfs.OutputService;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.time.Duration;
 import java.util.Map;
+import javax.annotation.Nullable;
 
 /**
  * Implements SymlinkTreeAction by using the output service or by running an embedded script to
@@ -47,10 +49,13 @@ public final class SymlinkTreeStrategy implements SymlinkTreeActionContext {
 
   private final OutputService outputService;
   private final String workspaceName;
+  @Nullable private final NativeBatchOperations batchOperations;
 
-  public SymlinkTreeStrategy(OutputService outputService, String workspaceName) {
+  public SymlinkTreeStrategy(
+      OutputService outputService, String workspaceName, boolean nativeRunfiles) {
     this.outputService = outputService;
     this.workspaceName = workspaceName;
+    this.batchOperations = nativeRunfiles ? new NativeBatchOperations() : null;
   }
 
   @Override
@@ -120,6 +125,7 @@ public final class SymlinkTreeStrategy implements SymlinkTreeActionContext {
         actionExecutionContext.getInputPath(action.getInputManifest()),
         actionExecutionContext.getInputPath(action.getOutputManifest()),
         actionExecutionContext.getInputPath(action.getOutputManifest()).getParentDirectory(),
-        workspaceName);
+        workspaceName,
+        batchOperations);
   }
 }

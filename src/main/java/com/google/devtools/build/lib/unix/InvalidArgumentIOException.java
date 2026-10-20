@@ -18,7 +18,7 @@ import java.io.IOException;
 
 /**
  * {@link IOException} indicating that the argument to an operation was invalid, like trying to read
- * a normal file as a symbolic link. Instantiated only by JNI.
+ * a normal file as a symbolic link.
  */
 public class InvalidArgumentIOException extends IOException {
   public InvalidArgumentIOException(String message) {

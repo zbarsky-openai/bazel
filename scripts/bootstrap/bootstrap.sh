@@ -47,9 +47,9 @@ _BAZEL_ARGS="--spawn_strategy=standalone \
       --check_direct_dependencies=error \
       --lockfile_mode=update \
       --override_repository=$(cat derived/maven/MAVEN_CANONICAL_REPO_NAME)=derived/maven \
-      --java_runtime_version=${JAVA_VERSION} \
+      --java_runtime_version=25 \
       --java_language_version=${JAVA_VERSION} \
-      --tool_java_runtime_version=${JAVA_VERSION} \
+      --tool_java_runtime_version=25 \
       --tool_java_language_version=${JAVA_VERSION} \
       --javacopt=-proc:full \
       --host_javacopt=-proc:full \
