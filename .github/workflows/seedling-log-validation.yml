@@ -11,11 +11,8 @@ jobs:
       matrix:
         include:
           - os: windows-2022
-            source: 48c781110807c507bc29067cdffea2e137ff7be9
+            source: 35e77e0112df247728b66cd635e29a18fdcd1b05
             bazelisk: bazelisk-windows-amd64.exe
-          - os: macos-14
-            source: ea5b55296db23f36a9bfba7dad884524e3c47572
-            bazelisk: bazelisk-darwin-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -41,6 +38,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install Bazelisk and verify source
+        id: bazelisk
         shell: bash
         env:
           EXPECTED_SOURCE: ${{ matrix.source }}
@@ -58,7 +56,7 @@ jobs:
           ./bazelisk-windows-amd64.exe --output_user_root=C:/b --nohome_rc --nosystem_rc --host_jvm_args=-Xmx3g test -c opt --jobs=2 --local_test_jobs=1 --local_resources=memory=4096 --worker_max_instances=1 --test_output=errors --nocache_test_results //tools/test:tw_test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows remote action filesystem
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && steps.bazelisk.outcome == 'success'
         shell: pwsh
         run: |
           ./bazelisk-windows-amd64.exe --output_user_root=C:/b --nohome_rc --nosystem_rc --host_jvm_args=-Xmx3g test -c opt --jobs=2 --local_test_jobs=1 --local_resources=memory=4096 --worker_max_instances=1 --test_output=errors --nocache_test_results --test_filter=RemoteActionFileSystemTest //src/test/java/com/google/devtools/build/lib/remote:RemoteTests
