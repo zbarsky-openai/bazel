@@ -1,0 +1,81 @@
+name: Validate Seedling log fixes
+on:
+  push:
+    branches: [codex/validate-seedling-log-fixes-20261024]
+permissions:
+  contents: read
+jobs:
+  native-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            source: 48c781110807c507bc29067cdffea2e137ff7be9
+            bazelisk: bazelisk-windows-amd64.exe
+          - os: macos-14
+            source: ea5b55296db23f36a9bfba7dad884524e3c47572
+            bazelisk: bazelisk-darwin-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Set up Windows tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config --system core.longpaths true
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bash = 'C:/msys64/usr/bin/bash.exe'
+          & $bash -lc 'pacman --noconfirm --needed -S zip unzip patch'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or !$vs) { throw 'Visual Studio x64 tools are required.' }
+          "BAZEL_VC=$vs/VC" >> $env:GITHUB_ENV
+          "BAZEL_SH=$bash" >> $env:GITHUB_ENV
+          'C:/msys64/usr/bin' >> $env:GITHUB_PATH
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ matrix.source }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Bazelisk and verify source
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+          BAZELISK_ASSET: ${{ matrix.bazelisk }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          curl --fail --location --retry 3 --output "$BAZELISK_ASSET" "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/$BAZELISK_ASSET"
+          chmod +x "$BAZELISK_ASSET"
+          printf 'Validated source: %s\n' "$EXPECTED_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Test Windows wrapper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./bazelisk-windows-amd64.exe --output_user_root=C:/b --nohome_rc --nosystem_rc --host_jvm_args=-Xmx3g test -c opt --jobs=2 --local_test_jobs=1 --local_resources=memory=4096 --worker_max_instances=1 --test_output=errors --nocache_test_results //tools/test:tw_test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test Windows remote action filesystem
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./bazelisk-windows-amd64.exe --output_user_root=C:/b --nohome_rc --nosystem_rc --host_jvm_args=-Xmx3g test -c opt --jobs=2 --local_test_jobs=1 --local_resources=memory=4096 --worker_max_instances=1 --test_output=errors --nocache_test_results --test_filter=RemoteActionFileSystemTest //src/test/java/com/google/devtools/build/lib/remote:RemoteTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test macOS XML generation
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bazelisk-darwin-arm64 --nohome_rc --nosystem_rc --host_jvm_args=-Xmx3g test -c opt --jobs=2 --test_output=errors --nocache_test_results //src/test/shell/bazel:generate_xml_test
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-log-tests-${{ matrix.os }}
+          path: |
+            bazel-testlogs/**/test.xml
+            bazel-testlogs/**/test.log
+          if-no-files-found: ignore
+          retention-days: 7
