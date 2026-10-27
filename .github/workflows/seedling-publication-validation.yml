@@ -1,0 +1,113 @@
+name: Validate Seedling publication
+on:
+  push:
+    branches: [codex/validate-seedling-publication-20261027]
+permissions:
+  contents: read
+jobs:
+  native-tests:
+    name: PR ${{ matrix.pr }} native tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - pr: 132
+            source: 14eb4e3ae5c7100d1ca24f2bd5a38e28144ad909
+            suite: mapper
+          - pr: 133
+            source: 3a5a155f5d7236aaaad6da5f3c16f36412a18a83
+            suite: persistence
+          - pr: 134
+            source: 2e785cdf877eac113f510c3af359ab294aef6fa7
+            suite: preparation
+          - pr: 136
+            source: da2ca18b28c203a63092337566f3a9b78955131b
+            suite: miss-propagation
+    env:
+      EXPECTED_SOURCE: ${{ matrix.source }}
+      SUITE: ${{ matrix.suite }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ matrix.source }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Bazelisk and verify source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          test "$(id -u)" -ne 0
+          df -h . /tmp
+          free -h
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 120 \
+            --output "$RUNNER_TEMP/bazelisk" \
+            https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+          echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  $RUNNER_TEMP/bazelisk" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bazelisk"
+          printf 'Validated source: `%s`\n' "$EXPECTED_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run affected tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bazel=("$RUNNER_TEMP/bazelisk" --batch --nohome_rc --nosystem_rc --host_jvm_args=-Xmx4g)
+          tests=(test -c opt --jobs=2 --local_test_jobs=1 --local_resources=memory=8192
+            --worker_max_instances=1 --nocache_test_results --test_timeout=900
+            --test_sharding_strategy=disabled --test_output=errors --test_summary=detailed
+            "--test_env=EXTRA_BAZELRC=startup --host_jvm_args=-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts")
+          case "$SUITE" in
+            mapper)
+              "${bazel[@]}" "${tests[@]}" \
+                '--test_filter=(ActionKeyContextTest|CommandLinesTest|StarlarkCustomCommandLineTest)#' \
+                //src/test/java/com/google/devtools/build/lib/actions:ActionsTests \
+                //src/test/java/com/google/devtools/build/lib/analysis/starlark:StarlarkCustomCommandLineTest
+              ;;
+            persistence)
+              "${bazel[@]}" "${tests[@]}" \
+                '--test_filter=(CompactPersistentActionCacheTest|PersistentStringIndexerTest)#' \
+                //src/test/java/com/google/devtools/build/lib/actions/cache:ActionCacheTests
+              ;;
+            preparation)
+              "${bazel[@]}" "${tests[@]}" --test_filter=StandaloneTestStrategyTest# \
+                //src/test/java/com/google/devtools/build/lib/exec:ExecTests
+              "${bazel[@]}" "${tests[@]}" //src/test/shell/bazel:cache_probe_test
+              "${bazel[@]}" "${tests[@]}" --test_filter=RemoteExecutionServiceTest#downloadOutputs \
+                //src/test/java/com/google/devtools/build/lib/remote:RemoteTests
+              ;;
+            miss-propagation)
+              "${bazel[@]}" "${tests[@]}" //src/test/java/com/google/devtools/build/skyframe:SkyframeTests
+              "${bazel[@]}" "${tests[@]}" //src/test/shell/bazel:cache_probe_test
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Record executed cases
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path("bazel-testlogs").rglob("test.xml"))
+          assert reports, "No test reports were produced"
+          executed = skipped = 0
+          for report in reports:
+              cases = list(ET.parse(report).iter("testcase"))
+              ran = [case for case in cases if case.find("skipped") is None]
+              assert ran, f"No cases executed in {report}"
+              assert not any(case.find("failure") is not None or case.find("error") is not None for case in ran)
+              executed += len(ran)
+              skipped += len(cases) - len(ran)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"\nExecuted cases: {executed}; skipped cases: {skipped}.\n")
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: seedling-pr-${{ matrix.pr }}-${{ matrix.source }}
+          path: |
+            bazel-testlogs/**/test.xml
+            bazel-testlogs/**/test.log
+          if-no-files-found: ignore
+          retention-days: 7
