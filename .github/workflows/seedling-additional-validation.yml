@@ -1,0 +1,180 @@
+name: Validate additional Seedling publications
+permissions:
+  contents: read
+jobs:
+  native-tests:
+    name: PR ${{ matrix.pr }} native tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+        - pr: 138
+          source: b2369110414c35d4ad913c09abbc2018a06a7b19
+          suite: persistence
+        - pr: 170
+          source: af2c1fccd01ad0ffe20c61e6339b4caed5913fb7
+          suite: results
+        - pr: 171
+          source: ec29f28fb548ee312dd88a2212d963cb07211489
+          suite: transient
+        - pr: 172
+          source: f5c522290ef9e737adc3431e2cce024fe28ef043
+          suite: jni
+        - pr: 173
+          source: 91a38e828a6f524eb9e63a7a3203f21815452c54
+          suite: heap
+        - pr: 174
+          source: 4d41c91f58c5b851dbeb010ad8216a771060d3e5
+          suite: external
+    env:
+      EXPECTED_SOURCE: ${{ matrix.source }}
+      SUITE: ${{ matrix.suite }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ matrix.source }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Install Bazelisk and verify source
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+        test "$(id -u)" -ne 0
+        df -h . /tmp
+        free -h
+        curl --fail --location --retry 3 --connect-timeout 15 --max-time 120 \
+          --output "$RUNNER_TEMP/bazelisk" \
+          https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+        echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  $RUNNER_TEMP/bazelisk" | sha256sum --check
+        chmod +x "$RUNNER_TEMP/bazelisk"
+        printf 'Validated source: `%s`\n' "$EXPECTED_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+    - name: Run affected tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        bazel=("$RUNNER_TEMP/bazelisk" --batch --nohome_rc --nosystem_rc --host_jvm_args=-Xmx4g)
+        tests=(test -c opt --jobs=2 --local_test_jobs=1 --local_resources=memory=8192
+          --worker_max_instances=1 --nocache_test_results --test_timeout=900
+          --test_sharding_strategy=disabled --test_output=errors --test_summary=detailed
+          "--test_env=EXTRA_BAZELRC=startup --host_jvm_args=-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts")
+        case "$SUITE" in
+          persistence)
+            "${bazel[@]}" "${tests[@]}" \
+              '--test_filter=(CompactPersistentActionCacheTest|PersistentStringIndexerTest)#' \
+              //src/test/java/com/google/devtools/build/lib/actions/cache:ActionCacheTests
+            ;;
+          results)
+            "${bazel[@]}" "${tests[@]}" //src/test/shell/bazel:cache_probe_test
+            "${bazel[@]}" "${tests[@]}" --test_filter=test_console_log_for_builds \
+              //src/test/shell/integration:target_compatible_with_test
+            ;;
+          transient)
+            "${bazel[@]}" "${tests[@]}" //src/test/java/com/google/devtools/build/skyframe:SkyframeTests
+            "${bazel[@]}" "${tests[@]}" //src/test/shell/bazel:cache_probe_test
+            ;;
+          external)
+            "${bazel[@]}" "${tests[@]}" \
+              --test_filter=test_single_external_symlink_preserves_repository_changes \
+              //src/test/shell/bazel:local_repository_test
+            ;;
+          jni|heap)
+            "${bazel[@]}" build -c opt --jobs=2 --local_resources=memory=8192 \
+              --worker_max_instances=1 --nostamp //src:bazel
+            ;;
+          *) exit 1 ;;
+        esac
+    - name: Check fresh JVM behavior
+      if: env.SUITE == 'jni' || env.SUITE == 'heap'
+      shell: python
+      run: |
+        import json, os, subprocess
+        from pathlib import Path
+        binary = Path("bazel-bin/src/bazel").resolve(strict=True)
+        root = Path(os.environ["RUNNER_TEMP"]) / "seedling-runtime"
+        root.mkdir()
+        for name in ["workspace", "tmp", "jni"]:
+            (root / name).mkdir()
+        (root / "workspace/MODULE.bazel").write_text('module(name = "seedling_runtime")\n')
+        out = Path("runtime-results").resolve()
+        out.mkdir()
+        env = dict(os.environ)
+        env.pop("HORAPHA_SHRINK_HEAP", None)
+        env.pop("HORAPHA_JNI_DIR", None)
+        args = [str(binary), "--batch", "--ignore_all_rc_files",
+                f"--output_user_root={root}/user-root", f"--output_base={root}/output-base",
+                "--host_jvm_args=-Xms32m", "--host_jvm_args=-Xmx1g",
+                "--host_jvm_args=-XX:+UseG1GC", "--host_jvm_args=-XX:MinHeapFreeRatio=30",
+                "--host_jvm_args=-XX:MaxHeapFreeRatio=60",
+                f"--host_jvm_args=-Djava.io.tmpdir={root}/tmp", "info", "used-heap-size-after-gc"]
+        def run(name):
+            result = subprocess.run(args, cwd=root / "workspace", env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+            (out / (name + ".log")).write_bytes(result.stdout)
+            result.check_returncode()
+            return result.stdout.decode()
+        def libraries():
+            return {str(x.relative_to(root)): x.stat().st_size for x in (root / "jni").rglob("*.so")}
+        if os.environ["SUITE"] == "jni":
+            env["HORAPHA_JNI_DIR"] = str(root / "jni")
+            run("first-jvm")
+            first = libraries()
+            assert first and all(first.values()), "JNI libraries were not retained"
+            run("second-jvm")
+            second = libraries()
+            assert set(first) < set(second) and all(second.values()), "JNI paths were not unique"
+            detail = {"libraries": second}
+        else:
+            assert "HORAPHA_HEAP_SHRINK" not in run("default")
+            env["HORAPHA_SHRINK_HEAP"] = "1"
+            text = run("shrink")
+            rows = [line.split("HORAPHA_HEAP_SHRINK ", 1)[1] for line in text.splitlines()
+                    if line.startswith("HORAPHA_HEAP_SHRINK ")]
+            assert len(rows) == 1
+            detail = json.loads(rows[0])
+            assert detail["min_before"] == detail["min_restored"] == 30
+            assert detail["max_before"] == detail["max_restored"] == 60
+            assert 0 < detail["used_after"] <= detail["committed_after"] <= detail["max_heap_bytes"]
+        result = {"source": os.environ["EXPECTED_SOURCE"], "suite": os.environ["SUITE"],
+                  "passed": True, "fresh_jvms": 2, "detail": detail}
+        (out / "result.json").write_text(json.dumps(result, indent=2))
+        print(json.dumps(result))
+    - name: Record executed cases
+      shell: python
+      run: |
+        import os
+        from pathlib import Path
+        import xml.etree.ElementTree as ET
+        reports = list(Path("bazel-testlogs").rglob("test.xml"))
+        assert reports, "No test reports were produced"
+        executed = skipped = 0
+        for report in reports:
+            cases = list(ET.parse(report).iter("testcase"))
+            ran = [case for case in cases if case.find("skipped") is None]
+            assert ran, f"No cases executed in {report}"
+            assert not any(case.find("failure") is not None or case.find("error") is not None for case in ran)
+            executed += len(ran)
+            skipped += len(cases) - len(ran)
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+            summary.write(f"\nExecuted cases: {executed}; skipped cases: {skipped}.\n")
+      if: env.SUITE != 'jni' && env.SUITE != 'heap'
+    - name: Save test results
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: seedling-pr-${{ matrix.pr }}-${{ matrix.source }}
+        path: |
+          bazel-testlogs/**/test.xml
+          bazel-testlogs/**/test.log
+
+          runtime-results/*.log
+          runtime-results/result.json
+        if-no-files-found: ignore
+        retention-days: 7
+'on':
+  push:
+    branches:
+    - codex/validate-seedling-additional-20261027
