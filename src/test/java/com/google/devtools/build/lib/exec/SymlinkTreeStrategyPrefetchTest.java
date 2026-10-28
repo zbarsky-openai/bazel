@@ -83,7 +83,9 @@ public final class SymlinkTreeStrategyPrefetchTest extends BuildViewTestCase {
     StaticInputMetadataProvider metadataProvider = StaticInputMetadataProvider.empty();
 
     when(context.getContext(SymlinkTreeActionContext.class))
-        .thenReturn(new SymlinkTreeStrategy(outputService, TestConstants.WORKSPACE_NAME));
+        .thenReturn(
+            new SymlinkTreeStrategy(
+                outputService, TestConstants.WORKSPACE_NAME, /* nativeRunfiles= */ false));
     when(context.getInputPath(any())).thenAnswer((i) -> ((Artifact) i.getArgument(0)).getPath());
     when(context.getEventHandler()).thenReturn(new StoredEventHandler());
     when(context.getActionInputPrefetcher()).thenReturn(prefetcher);

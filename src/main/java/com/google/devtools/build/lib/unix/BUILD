@@ -61,12 +61,16 @@ java_library(
     name = "native_posix_files_service_impl",
     srcs = [
         "NativePosixFilesServiceImpl.java",
+        "TimberBatchOperations.java",
     ],
     deps = [
         ":native_posix_files_service",
         "//src/main/java/com/google/devtools/build/lib/bugreport",
         "//src/main/java/com/google/devtools/build/lib/jni",
         "//src/main/java/com/google/devtools/build/lib/skybridge:sc_only",
+        "//src/main/java/com/google/devtools/build/lib/unsafe:string",
+        "//src/main/java/com/google/devtools/build/lib/util:blocker",
+        "//src/main/java/com/google/devtools/build/lib/util:os",
         "//third_party/java/jsr305_annotations",
     ],
 )

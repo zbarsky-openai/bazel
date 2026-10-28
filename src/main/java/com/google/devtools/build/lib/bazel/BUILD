@@ -263,6 +263,7 @@ java_library(
 
 java_binary(
     name = "BazelServer",
+    deploy_manifest_lines = ["Enable-Native-Access: ALL-UNNAMED"],
     javacopts = [
         "-Xlint:all",
     ],

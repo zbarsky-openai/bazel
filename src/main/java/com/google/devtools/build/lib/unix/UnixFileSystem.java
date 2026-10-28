@@ -13,7 +13,10 @@
 // limitations under the License.
 package com.google.devtools.build.lib.unix;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
@@ -36,6 +39,7 @@ import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.ArrayDeque;
 import java.util.Collection;
+import java.util.List;
 import javax.annotation.Nullable;
 
 /**
@@ -54,6 +58,44 @@ public class UnixFileSystem extends DiskBackedFileSystem {
     super(hashFunction);
     this.hashAttributeName = hashAttributeName;
     this.nativePosixFilesService = nativePosixFilesService;
+  }
+
+  private static void checkBatchCreatePaths(PathFragment root, List<PathFragment> paths) {
+    checkArgument(root.isAbsolute() && root.getPathString().indexOf('\0') < 0);
+    checkArgument(paths.size() <= 4096);
+    for (PathFragment path : paths) {
+      checkArgument(
+          !path.isAbsolute()
+              && !path.isEmpty()
+              && !path.containsUplevelReferences()
+              && path.getPathString().indexOf('\0') < 0);
+    }
+  }
+
+  @Override
+  public int createDirectoriesBatch(PathFragment root, List<PathFragment> paths)
+      throws IOException {
+    checkBatchCreatePaths(root, paths);
+    return run(
+        () ->
+            nativePosixFilesService.createDirectoriesBatch(
+                root.getPathString(), Lists.transform(paths, PathFragment::getPathString)));
+  }
+
+  @Override
+  public int[] createSymlinksBatch(
+      PathFragment root, List<PathFragment> paths, List<PathFragment> targets) throws IOException {
+    checkArgument(paths.size() == targets.size());
+    for (PathFragment target : targets) {
+      checkArgument(target.getPathString().indexOf('\0') < 0);
+    }
+    checkBatchCreatePaths(root, paths);
+    return run(
+        () ->
+            nativePosixFilesService.createSymlinksBatch(
+                root.getPathString(),
+                Lists.transform(paths, PathFragment::getPathString),
+                Lists.transform(targets, PathFragment::getSafePathString)));
   }
 
   @Override

@@ -62,6 +62,17 @@ import javax.annotation.Nullable;
 public abstract class ExecutionOptions extends OptionsBase {
 
   @Option(
+      name = "experimental_native_runfiles",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
+      effectTags = {OptionEffectTag.EXECUTION},
+      help =
+          "Use Timber ioctls to create runfiles directories and symlinks on Linux when"
+              + " --build_runfile_links is enabled. Unsupported filesystems use ordinary"
+              + " operations.")
+  public abstract boolean getNativeRunfiles();
+
+  @Option(
       name = "spawn_strategy",
       defaultValue = "",
       converter = CommaSeparatedNonEmptyOptionListConverter.class,

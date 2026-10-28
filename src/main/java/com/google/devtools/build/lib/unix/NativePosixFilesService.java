@@ -16,11 +16,31 @@ package com.google.devtools.build.lib.unix;
 
 import com.google.devtools.build.lib.runtime.BlazeService;
 import com.google.devtools.build.lib.skybridge.SkybridgeInterface;
+import java.util.List;
 import javax.annotation.Nullable;
 
 /** A {@link BlazeService} providing access to POSIX filesystem calls. */
 @SkybridgeInterface
 public interface NativePosixFilesService extends BlazeService {
+  /**
+   * Creates ancestor-first relative directories. Returns the created prefix, or -1 if unsupported
+   * without writes. An exception can indicate partial completion.
+   */
+  default int createDirectoriesBatch(String root, List<String> paths)
+      throws NativePosixFilesException {
+    return -1;
+  }
+
+  /**
+   * Creates relative links, returning per-entry errors (zero for success), or null if unsupported
+   * without writes. An exception can indicate partial completion and must not be replayed.
+   */
+  @Nullable
+  default int[] createSymlinksBatch(String root, List<String> paths, List<String> targets)
+      throws NativePosixFilesException {
+    return null;
+  }
+
   /**
    * Native wrapper around Linux readlink(2) call.
    *
