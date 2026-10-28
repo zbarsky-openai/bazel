@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.vfs.FileSymlinkLoopException;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
+import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.SymlinkAwareFileSystemTest;
 import com.google.devtools.build.lib.vfs.Symlinks;
 import com.google.testing.junit.testparameterinjector.TestParameter;
@@ -44,6 +45,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
@@ -63,6 +66,113 @@ public class UnixFileSystemTest extends SymlinkAwareFileSystemTest {
   }
 
   // Most tests are just inherited from FileSystemTest.
+
+  @Test
+  public void nativeCreationUsesInjectedServiceAndTranslatesErrors() throws Exception {
+    NativePosixFilesService service = mock(NativePosixFilesService.class);
+    FileSystem fs = new UnixFileSystem(DigestHashFunction.SHA256, "", service);
+    PathFragment root = PathFragment.create("/batch-root");
+    List<PathFragment> paths = List.of(PathFragment.create("dir-\u00ff"));
+    when(service.createDirectoriesBatch("/batch-root", List.of("dir-\u00ff"))).thenReturn(1);
+    assertThat(fs.createDirectoriesBatch(root, paths)).isEqualTo(1);
+
+    int[] errors = {0};
+    when(service.createSymlinksBatch("/batch-root", List.of("dir-\u00ff"), List.of(".")))
+        .thenReturn(errors);
+    assertThat(fs.createSymlinksBatch(root, paths, List.of(PathFragment.EMPTY_FRAGMENT)))
+        .isSameInstanceAs(errors);
+
+    when(service.createDirectoriesBatch("/batch-root", List.of("dir-\u00ff")))
+        .thenThrow(
+            new NativePosixFilesException("denied", NativePosixFilesException.PosixError.EACCES));
+    assertThat(
+            assertThrows(FileAccessException.class, () -> fs.createDirectoriesBatch(root, paths)))
+        .hasMessageThat()
+        .isEqualTo("denied");
+  }
+
+  @Test
+  public void nativeCreationRejectsInvalidPackedRequestsBeforeWrites() throws Exception {
+    assumeTrue(OS.getCurrent() == OS.LINUX);
+    Path root = absolutize("native-create-bounds");
+    root.createDirectory();
+    for (String invalid : List.of("bad\0path", "x".repeat(1024 * 1024))) {
+      assertThrows(
+          NativePosixFilesException.class,
+          () ->
+              TimberBatchOperations.createSymlinks(
+                  root.getPathString(), List.of("first", invalid), List.of("target", "target")));
+      assertThat(root.getChild("first").exists(Symlinks.NOFOLLOW)).isFalse();
+    }
+    assertThrows(
+        NativePosixFilesException.class,
+        () ->
+            TimberBatchOperations.createDirectories(
+                root.getPathString(), Collections.nCopies(4097, "path")));
+    assertThrows(
+        NativePosixFilesException.class,
+        () ->
+            TimberBatchOperations.createSymlinks(
+                root.getPathString() + "\0", List.of("first"), List.of("target")));
+    assertThrows(
+        NativePosixFilesException.class,
+        () ->
+            TimberBatchOperations.createSymlinks(
+                root.getPathString(),
+                List.of("first", "second"),
+                List.of("target", "bad\0target")));
+    assertThat(root.getDirectoryEntries()).isEmpty();
+  }
+
+  @Test
+  public void nativeCreationPreservesBytesAndCompletedPrefix() throws Exception {
+    Path root = absolutize("native-create-parity");
+    root.createDirectory();
+    FileSystem fs = root.getFileSystem();
+    PathFragment rawDirectory = PathFragment.create("dir-\u00ff");
+    PathFragment rawChild = PathFragment.create("child-\u0080");
+    int created =
+        fs.createDirectoriesBatch(
+            root.asFragment(), List.of(rawDirectory, rawDirectory.getRelative(rawChild)));
+    if (created == -1) {
+      assertThat(root.getDirectoryEntries()).isEmpty();
+      assertThat(
+              fs.createSymlinksBatch(
+                  root.asFragment(),
+                  List.of(PathFragment.create("link")),
+                  List.of(PathFragment.create("target"))))
+          .isNull();
+      return;
+    }
+    assertThat(created).isEqualTo(2);
+    Path directory = root.getRelative(rawDirectory);
+    assertThat(directory.getRelative(rawChild).isDirectory()).isTrue();
+    PathFragment rawLink = PathFragment.create("link-\u00fe");
+    PathFragment rawTarget = PathFragment.create("../target-\u00fd");
+    assertThat(
+            fs.createSymlinksBatch(
+                directory.asFragment(),
+                List.of(rawLink, PathFragment.create("self")),
+                List.of(rawTarget, PathFragment.EMPTY_FRAGMENT)))
+        .isEqualTo(new int[] {0, 0});
+    assertThat(directory.getRelative(rawLink).readSymbolicLink()).isEqualTo(rawTarget);
+    assertThat(directory.getChild("self").readSymbolicLink().getSafePathString()).isEqualTo(".");
+    assertThat(
+            fs.createSymlinksBatch(
+                directory.asFragment(),
+                List.of(rawLink, PathFragment.create("after")),
+                List.of(PathFragment.create("replacement"), rawTarget)))
+        .isEqualTo(new int[] {-17, 0}); // -EEXIST does not prevent later symlinks.
+    assertThat(directory.getRelative(rawLink).readSymbolicLink()).isEqualTo(rawTarget);
+    assertThat(directory.getChild("after").readSymbolicLink()).isEqualTo(rawTarget);
+    assertThat(
+            fs.createDirectoriesBatch(
+                directory.asFragment(),
+                List.of(PathFragment.create("prefix"), rawChild, PathFragment.create("never"))))
+        .isEqualTo(1);
+    assertThat(directory.getChild("prefix").isDirectory()).isTrue();
+    assertThat(directory.getChild("never").exists(Symlinks.NOFOLLOW)).isFalse();
+  }
 
   @Test
   public void testPermissions() throws Exception {

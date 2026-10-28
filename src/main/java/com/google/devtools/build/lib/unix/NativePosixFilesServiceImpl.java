@@ -17,6 +17,8 @@ package com.google.devtools.build.lib.unix;
 import com.google.devtools.build.lib.bugreport.BugReport;
 import com.google.devtools.build.lib.jni.JniLoader;
 import com.google.devtools.build.lib.skybridge.ScOnly;
+import com.google.devtools.build.lib.util.OS;
+import java.util.List;
 import javax.annotation.Nullable;
 
 /** Implementation of {@link NativePosixFilesService}. */
@@ -27,6 +29,29 @@ public final class NativePosixFilesServiceImpl implements NativePosixFilesServic
 
   static {
     JniLoader.loadJni();
+  }
+
+  private static boolean supportsTimberBatches() {
+    return OS.getCurrent() == OS.LINUX
+        && switch (System.getProperty("os.arch")) {
+          case "amd64", "x86_64", "x64", "aarch64" -> true;
+          default -> false;
+        };
+  }
+
+  @Override
+  public int createDirectoriesBatch(String root, List<String> paths)
+      throws NativePosixFilesException {
+    return supportsTimberBatches() ? TimberBatchOperations.createDirectories(root, paths) : -1;
+  }
+
+  @Override
+  @Nullable
+  public int[] createSymlinksBatch(String root, List<String> paths, List<String> targets)
+      throws NativePosixFilesException {
+    return supportsTimberBatches()
+        ? TimberBatchOperations.createSymlinks(root, paths, targets)
+        : null;
   }
 
   @Override
