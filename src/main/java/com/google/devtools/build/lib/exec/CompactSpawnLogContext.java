@@ -447,10 +447,6 @@ public class CompactSpawnLogContext extends SpawnLogContext {
                       runfilesTree,
                       inputMetadataProvider,
                       fileSystem,
-                      // Runfiles of non-test spawns are tool inputs and thus potentially reused
-                      // between spawns. Runfiles of test spawns are reused if the test is attempted
-                      // multiple times in the same build; in this case, the runfiles tree caches
-                      // its mapping.
                       !isTestRunnerSpawn || runfilesTree.isMappingCached()));
               continue;
             }

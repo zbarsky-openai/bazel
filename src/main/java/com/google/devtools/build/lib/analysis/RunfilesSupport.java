@@ -39,7 +39,6 @@ import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue.Run
 import com.google.devtools.build.lib.analysis.config.CoreOptions;
 import com.google.devtools.build.lib.analysis.config.RunUnder;
 import com.google.devtools.build.lib.analysis.config.RunUnder.LabelRunUnder;
-import com.google.devtools.build.lib.analysis.test.TestActionBuilder;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
@@ -107,17 +106,20 @@ public final class RunfilesSupport {
      * The cached runfiles mapping. Possible values:
      *
      * <ul>
-     *   <li>null if caching is not desired
      *   <li>A weak reference pointing to null if the cached value is not available (either {@link
      *       #NOT_YET_COMPUTED} or flushed from RAM)
      *   <li>A weak reference to the cached value
      * </ul>
      *
+     * <p>Even a single test action needs this mapping for both metadata fingerprinting and remote
+     * input expansion.
+     *
      * <p>Using weak references is preferable to soft references because {@link
      * com.google.devtools.build.lib.runtime.GcThrashingDetector} may throw a manual OOM before all
      * soft references are collected. See b/322474776.
      */
-    @Nullable private volatile WeakReference<SortedMap<PathFragment, Artifact>> cachedMapping;
+    private volatile WeakReference<SortedMap<PathFragment, Artifact>> cachedMapping =
+        NOT_YET_COMPUTED;
 
     private final boolean buildRunfileLinks;
     private final RunfileSymlinksMode runfileSymlinksMode;
@@ -128,7 +130,6 @@ public final class RunfilesSupport {
         @Nullable Artifact repoMappingManifest,
         @Nullable ArtifactRoot originatingTargetRoot,
         boolean buildRunfileLinks,
-        boolean cacheMapping,
         RunfileSymlinksMode runfileSymlinksMode) {
       this.execPath = execPath;
       this.runfiles = runfiles;
@@ -136,7 +137,6 @@ public final class RunfilesSupport {
       this.originatingTargetRoot = originatingTargetRoot;
       this.buildRunfileLinks = buildRunfileLinks;
       this.runfileSymlinksMode = runfileSymlinksMode;
-      this.cachedMapping = cacheMapping ? NOT_YET_COMPUTED : null;
     }
 
     @VisibleForTesting
@@ -147,7 +147,6 @@ public final class RunfilesSupport {
           /* repoMappingManifest= */ null,
           /* originatingTargetRoot= */ null,
           /* buildRunfileLinks= */ false,
-          /* cacheMapping= */ false,
           RunfileSymlinksMode.CREATE);
     }
 
@@ -158,10 +157,6 @@ public final class RunfilesSupport {
 
     @Override
     public SortedMap<PathFragment, Artifact> getMapping() {
-      if (cachedMapping == null) {
-        return runfiles.getRunfilesInputs(repoMappingManifest, originatingTargetRoot);
-      }
-
       SortedMap<PathFragment, Artifact> result = cachedMapping.get();
       if (result != null) {
         return result;
@@ -212,7 +207,7 @@ public final class RunfilesSupport {
 
     @Override
     public boolean isMappingCached() {
-      return cachedMapping != null;
+      return true;
     }
 
     @Override
@@ -238,12 +233,10 @@ public final class RunfilesSupport {
 
     @Override
     public boolean containsConstantMetadata() {
-      if (cachedMapping != null) {
-        SortedMap<PathFragment, Artifact> mapping = cachedMapping.get();
-        if (mapping != null) {
-          return mapping.values().stream()
-              .anyMatch(artifact -> artifact != null && artifact.isConstantMetadata());
-        }
+      SortedMap<PathFragment, Artifact> mapping = cachedMapping.get();
+      if (mapping != null) {
+        return mapping.values().stream()
+            .anyMatch(artifact -> artifact != null && artifact.isConstantMetadata());
       }
       return getArtifacts().toList().stream().anyMatch(Artifact::isConstantMetadata);
     }
@@ -258,28 +251,6 @@ public final class RunfilesSupport {
   private final Artifact owningExecutable;
   private final FlatCommandLine args;
   private final ActionEnvironment actionEnvironment;
-
-  // Only cache mappings if there is a chance that more than one action will use it within a single
-  // build. This helps reduce peak memory usage, especially when the value of --jobs is high, but
-  // avoids the additional overhead of a weak reference when it is not needed.
-  private static boolean cacheRunfilesMappings(RuleContext ruleContext) {
-    if (!TargetUtils.isTestRule(ruleContext.getTarget())) {
-      // Runfiles trees of non-test rules are tools and can thus be used by multiple actions.
-      return true;
-    }
-
-    // Test runfiles are only used by a single test runner action unless there are multiple runs or
-    // shards.
-    if (TestActionBuilder.getRunsPerTest(ruleContext) > 1) {
-      return true;
-    }
-
-    if (TestActionBuilder.getShardCount(ruleContext) > 1) {
-      return true;
-    }
-
-    return false;
-  }
 
   /**
    * Creates the RunfilesSupport helper with the given executable and runfiles.
@@ -344,7 +315,6 @@ public final class RunfilesSupport {
             repoMappingManifest,
             preferTargetConfigurationRunfiles ? runfilesTreeArtifact.getRoot() : null,
             buildRunfileLinks,
-            cacheRunfilesMappings(ruleContext),
             runfileSymlinksMode);
 
     createRunfilesTreeArtifactAction(
@@ -593,7 +563,6 @@ public final class RunfilesSupport {
             null,
             preferTargetConfigurationRunfiles ? runfilesTreeArtifact.getRoot() : null,
             buildRunfilesLinks,
-            false,
             ruleContext.getConfiguration().getRunfileSymlinksMode());
     PathFragment rootRelativePath = runfilesTreeArtifact.getRootRelativePath();
     PathFragment manifestPath =
